@@ -1,7 +1,6 @@
 import logging
-import sqlite3
-import psycopg2
 import os
+import psycopg2
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -13,21 +12,22 @@ from telegram.ext import (
 )
 
 # ======================== تنظیمات اولیه ========================
-TOKEN = "YOUR_BOT_TOKEN" # توکن بات
-ADMIN_ID = 123456789 # ایدی عددی ادمین
-GROUP_ID = -1001234567890 # ایدی گروه برای لیدربورد
+TOKEN = os.getenv("BOT_TOKEN")  # توکن بات را از ENV بگیر
+ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))  # ادمین
+GROUP_ID = int(os.getenv("GROUP_ID", "-1001234567890"))  # گروه لیدربورد
 
 # ======================== دیتابیس ========================
-conn = sqlite3.connect("points.db", check_same_thread=False)
+DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL")
+conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
 cursor.execute(
-    "CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, points INTEGER DEFAULT 0)"
+    "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, points INT DEFAULT 0)"
 )
 conn.commit()
 
 
 def get_points(user_id: int) -> int:
-    cursor.execute("SELECT points FROM users WHERE user_id=?", (user_id,))
+    cursor.execute("SELECT points FROM users WHERE user_id=%s", (user_id,))
     row = cursor.fetchone()
     return row[0] if row else 0
 
@@ -36,7 +36,8 @@ def add_points(user_id: int, delta: int) -> int:
     current = get_points(user_id)
     new_points = current + delta
     cursor.execute(
-        "INSERT OR REPLACE INTO users (user_id, points) VALUES (?, ?)",
+        "INSERT INTO users (user_id, points) VALUES (%s, %s) "
+        "ON CONFLICT (user_id) DO UPDATE SET points = EXCLUDED.points",
         (user_id, new_points),
     )
     conn.commit()
@@ -44,7 +45,7 @@ def add_points(user_id: int, delta: int) -> int:
 
 
 def top_users(limit: int = 10):
-    cursor.execute("SELECT user_id, points FROM users ORDER BY points DESC LIMIT ?", (limit,))
+    cursor.execute("SELECT user_id, points FROM users ORDER BY points DESC LIMIT %s", (limit,))
     return cursor.fetchall()
 
 
@@ -101,23 +102,18 @@ async def add_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = context.user_data["target_id"]
     new_pts = add_points(uid, amount)
 
-    # اطلاع‌رسانی به کاربر
     try:
         await context.bot.send_message(
             chat_id=uid,
-            text=f"🎉 تبریک!\nادمین <b>{amount}</b> امتیاز به شما اضافه کرد.\n"
-                 f"موجودی فعلی: <b>{new_pts}</b> ⭐",
-            parse_mode="HTML",
+            text=f"🎉 تبریک! {amount} امتیاز به شما اضافه شد.\nموجودی فعلی: {new_pts} ⭐",
         )
     except Exception:
         pass
 
     await update.message.reply_text(
-        f"✅ <b>{amount}</b> امتیاز به کاربر <code>{uid}</code> اضافه شد.\n"
-        f"موجودی جدید: <b>{new_pts}</b> ⭐",
-        parse_mode="HTML",
+        f"✅ {amount} امتیاز به کاربر {uid} اضافه شد.\nموجودی جدید: {new_pts} ⭐"
     )
-    return await back_to_menu(update, context)
+    return ConversationHandler.END
 
 
 # ======================== کاهش امتیاز ========================
@@ -148,19 +144,15 @@ async def rem_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=uid,
-            text=f"⚠️ توجه!\nادمین <b>{amount}</b> امتیاز از شما کم کرد.\n"
-                 f"موجودی فعلی: <b>{new_pts}</b> ⭐",
-            parse_mode="HTML",
+            text=f"⚠️ {amount} امتیاز از شما کم شد.\nموجودی فعلی: {new_pts} ⭐",
         )
     except Exception:
         pass
 
     await update.message.reply_text(
-        f"✅ <b>{amount}</b> امتیاز از کاربر <code>{uid}</code> کم شد.\n"
-        f"موجودی جدید: <b>{new_pts}</b> ⭐",
-        parse_mode="HTML",
+        f"✅ {amount} امتیاز از کاربر {uid} کم شد.\nموجودی جدید: {new_pts} ⭐"
     )
-    return await back_to_menu(update, context)
+    return ConversationHandler.END
 
 
 # ======================== اطلاعات کاربر ========================
@@ -176,51 +168,13 @@ async def info_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INFO_UID
     uid = int(text)
     pts = get_points(uid)
-    try:
-        chat = await context.bot.get_chat(uid)
-        name = chat.first_name or "کاربر"
-    except Exception:
-        name = "ناشناس"
-
     await update.message.reply_text(
-        f"👤 <b>اطلاعات کاربر</b>\n"
-        f"آیدی: <code>{uid}</code>\n"
-        f"نام: {name}\n"
-        f"امتیاز: <b>{pts}</b> ⭐",
-        parse_mode="HTML",
+        f"👤 اطلاعات کاربر\nآیدی: {uid}\nامتیاز: {pts} ⭐"
     )
-    return await back_to_menu(update, context)
-
-
-# ======================== بازگشت به منو ========================
-async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        ["➕ افزودن امتیاز", "➖ کاهش امتیاز"],
-        ["📊 اطلاعات کاربر"],
-        ["❌ خروج"],
-    ]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("🔙 به منوی اصلی برگشتید. چه کاری انجام دهم؟", reply_markup=markup)
     return ConversationHandler.END
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        ["➕ افزودن امتیاز", "➖ کاهش امتیاز"],
-        ["📊 اطلاعات کاربر"],
-        ["❌ خروج"],
-    ]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("❌ عملیات لغو شد.", reply_markup=markup)
-    return ConversationHandler.END
-
-
-async def exit_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 خداحافظ! برای ورود دوباره /start را بزنید.", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
-
-
-# ======================== لیدربورد (فقط گروه) ========================
+# ======================== لیدربورد ========================
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != GROUP_ID:
         await update.message.reply_text("⛔ این دستور فقط در گروه مخصوص قابل استفاده است.")
@@ -231,19 +185,14 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🏆 هنوز هیچ امتیازی ثبت نشده.")
         return
 
+    text = "🏆 لیدربورد امتیازات 🏆\n\n"
     medals = ["🥇", "🥈", "🥉"]
-    text = "🏆 <b>لیدربورد امتیازات</b> 🏆\n\n"
     for i, (uid, pts) in enumerate(top):
-        try:
-            chat = await context.bot.get_chat(uid)
-            name = chat.first_name or "کاربر"
-        except Exception:
-            name = "ناشناس"
         rank = i + 1
         medal = medals[i] if i < 3 else "⭐"
-        text += f"{medal} <b>{rank}</b>. {name} (<code>{uid}</code>) → {pts} امتیاز\n"
+        text += f"{medal} {rank}. {uid} → {pts} امتیاز\n"
 
-    await update.message.reply_text(text, parse_mode="HTML")
+    await update.message.reply_text(text)
 
 
 # ======================== اجرای ربات ========================
@@ -251,25 +200,11 @@ def main():
     logging.basicConfig(level=logging.INFO)
     app = Application.builder().token(TOKEN).build()
 
-    # هندلر مکالمه (پنل ادمین)
     conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(
-                filters.Regex("^(➕ افزودن امتیاز)$") & filters.ChatType.PRIVATE & filters.User(ADMIN_ID),
-                add_start,
-            ),
-            MessageHandler(
-                filters.Regex("^(➖ کاهش امتیاز)$") & filters.ChatType.PRIVATE & filters.User(ADMIN_ID),
-                rem_start,
-            ),
-            MessageHandler(
-                filters.Regex("^(📊 اطلاعات کاربر)$") & filters.ChatType.PRIVATE & filters.User(ADMIN_ID),
-                info_start,
-            ),
-            MessageHandler(
-                filters.Regex("^(❌ خروج)$") & filters.ChatType.PRIVATE & filters.User(ADMIN_ID),
-                exit_panel,
-            ),
+            MessageHandler(filters.Regex("^(➕ افزودن امتیاز)$") & filters.User(ADMIN_ID), add_start),
+            MessageHandler(filters.Regex("^(➖ کاهش امتیاز)$") & filters.User(ADMIN_ID), rem_start),
+            MessageHandler(filters.Regex("^(📊 اطلاعات کاربر)$") & filters.User(ADMIN_ID), info_start),
         ],
         states={
             ADD_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_uid)],
@@ -278,57 +213,14 @@ def main():
             REM_AMT: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_amt)],
             INFO_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, info_uid)],
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^(خروج)$"), cancel),
-        ],
-        per_user=True,
-        per_chat=True,
+        fallbacks=[CommandHandler("cancel", lambda u,c: ConversationHandler.END)],
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("leaderboard", leaderboard))
-
-    # پیام برای دستورات ناشناس
-    async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("⚠️ دستور نامعتبر است.")
-
-    app.add_handler(MessageHandler(filters.COMMAND, unknown))
-
-    print("✅ ربات در حال اجراست...")
     app.run_polling()
 
 
 if __name__ == "__main__":
     main()
-
-# ======================== دیتابیس ========================
-DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL")  # این را در Render به عنوان ENV تعریف کن
-conn = psycopg2.connect(DATABASE_URL)
-cursor = conn.cursor()
-
-cursor.execute(
-    "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, points INT DEFAULT 0)"
-)
-conn.commit()
-
-def get_points(user_id: int) -> int:
-    cursor.execute("SELECT points FROM users WHERE user_id=%s", (user_id,))
-    row = cursor.fetchone()
-    return row[0] if row else 0
-
-def add_points(user_id: int, delta: int) -> int:
-    current = get_points(user_id)
-    new_points = current + delta
-    cursor.execute(
-        "INSERT INTO users (user_id, points) VALUES (%s, %s) "
-        "ON CONFLICT (user_id) DO UPDATE SET points = EXCLUDED.points",
-        (user_id, new_points),
-    )
-    conn.commit()
-    return new_points
-
-def top_users(limit: int = 10):
-    cursor.execute("SELECT user_id, points FROM users ORDER BY points DESC LIMIT %s", (limit,))
-    return cursor.fetchall()
