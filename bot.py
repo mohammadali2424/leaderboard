@@ -210,4 +210,4 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     medals = ["🥇", "🥈", "🥉"]
-    text = "🏆 <b>لیدربورد امتیازات</b
+    text = "🏆 <b>لیدربورد امتیازات</b> 🏆\n\n"
