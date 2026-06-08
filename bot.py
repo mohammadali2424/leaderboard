@@ -27,26 +27,20 @@ conn.commit()
 
 
 def get_points(user_id: int) -> int:
-    cursor.execute("SELECT points FROM users WHERE user_id=%s", (user_id,))
-    row = cursor.fetchone()
-    return row[0] if row else 0
-
+    result = supabase.table("users").select("points").eq("user_id", user_id).execute()
+    if result.data:
+        return result.data[0]["points"]
+    return 0
 
 def add_points(user_id: int, delta: int) -> int:
     current = get_points(user_id)
     new_points = current + delta
-    cursor.execute(
-        "INSERT INTO users (user_id, points) VALUES (%s, %s) "
-        "ON CONFLICT (user_id) DO UPDATE SET points = EXCLUDED.points",
-        (user_id, new_points),
-    )
-    conn.commit()
+    supabase.table("users").upsert({"user_id": user_id, "points": new_points}).execute()
     return new_points
 
-
 def top_users(limit: int = 10):
-    cursor.execute("SELECT user_id, points FROM users ORDER BY points DESC LIMIT %s", (limit,))
-    return cursor.fetchall()
+    result = supabase.table("users").select("*").order("points", desc=True).limit(limit).execute()
+    return [(row["user_id"], row["points"]) for row in result.data]
 
 
 # ======================== وضعیت‌های مکالمه ========================
