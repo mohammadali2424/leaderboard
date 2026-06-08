@@ -1,6 +1,5 @@
 import logging
 import os
-import psycopg2
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
