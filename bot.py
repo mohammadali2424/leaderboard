@@ -9,22 +9,20 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from supabase import create_client
 
 # ======================== تنظیمات اولیه ========================
-TOKEN = os.getenv("BOT_TOKEN")  # توکن بات را از ENV بگیر
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))  # ادمین
-GROUP_ID = int(os.getenv("GROUP_ID", "-1001234567890"))  # گروه لیدربورد
+TOKEN = os.getenv("YOUR_BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+GROUP_ID = int(os.getenv("GROUP_ID"))
+
+# ======================== اتصال به Supabase ========================
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ======================== دیتابیس ========================
-DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL")
-conn = psycopg2.connect(DATABASE_URL)
-cursor = conn.cursor()
-cursor.execute(
-    "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, points INT DEFAULT 0)"
-)
-conn.commit()
-
-
 def get_points(user_id: int) -> int:
     result = supabase.table("users").select("points").eq("user_id", user_id).execute()
     if result.data:
@@ -41,10 +39,8 @@ def top_users(limit: int = 10):
     result = supabase.table("users").select("*").order("points", desc=True).limit(limit).execute()
     return [(row["user_id"], row["points"]) for row in result.data]
 
-
 # ======================== وضعیت‌های مکالمه ========================
 ADD_UID, ADD_AMT, REM_UID, REM_AMT, INFO_UID = range(5)
-
 
 # ======================== منوی اصلی ========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,12 +65,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "برای دیدن لیدربورد در گروه مخصوص از /leaderboard استفاده کنید."
         )
 
-
 # ======================== افزودن امتیاز ========================
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 آیدی عددی کاربر را وارد کنید:", reply_markup=ReplyKeyboardRemove())
     return ADD_UID
-
 
 async def add_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -85,7 +79,6 @@ async def add_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("➕ مقدار امتیاز برای افزودن:")
     return ADD_AMT
 
-
 async def add_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not text.lstrip("-").isdigit():
@@ -95,25 +88,28 @@ async def add_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = context.user_data["target_id"]
     new_pts = add_points(uid, amount)
 
+    # اطلاع‌رسانی به کاربر
     try:
         await context.bot.send_message(
             chat_id=uid,
-            text=f"🎉 تبریک! {amount} امتیاز به شما اضافه شد.\nموجودی فعلی: {new_pts} ⭐",
+            text=f"🎉 تبریک!\nادمین <b>{amount}</b> امتیاز به شما اضافه کرد.\n"
+                 f"موجودی فعلی: <b>{new_pts}</b> ⭐",
+            parse_mode="HTML",
         )
     except Exception:
         pass
 
     await update.message.reply_text(
-        f"✅ {amount} امتیاز به کاربر {uid} اضافه شد.\nموجودی جدید: {new_pts} ⭐"
+        f"✅ <b>{amount}</b> امتیاز به کاربر <code>{uid}</code> اضافه شد.\n"
+        f"موجودی جدید: <b>{new_pts}</b> ⭐",
+        parse_mode="HTML",
     )
-    return ConversationHandler.END
-
+    return await back_to_menu(update, context)
 
 # ======================== کاهش امتیاز ========================
 async def rem_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 آیدی عددی کاربر را وارد کنید:", reply_markup=ReplyKeyboardRemove())
     return REM_UID
-
 
 async def rem_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -123,7 +119,6 @@ async def rem_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["target_id"] = int(text)
     await update.message.reply_text("➖ مقدار امتیاز برای کاهش:")
     return REM_AMT
-
 
 async def rem_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -137,22 +132,24 @@ async def rem_amt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=uid,
-            text=f"⚠️ {amount} امتیاز از شما کم شد.\nموجودی فعلی: {new_pts} ⭐",
+            text=f"⚠️ توجه!\nادمین <b>{amount}</b> امتیاز از شما کم کرد.\n"
+                 f"موجودی فعلی: <b>{new_pts}</b> ⭐",
+            parse_mode="HTML",
         )
     except Exception:
         pass
 
     await update.message.reply_text(
-        f"✅ {amount} امتیاز از کاربر {uid} کم شد.\nموجودی جدید: {new_pts} ⭐"
+        f"✅ <b>{amount}</b> امتیاز از کاربر <code>{uid}</code> کم شد.\n"
+        f"موجودی جدید: <b>{new_pts}</b> ⭐",
+        parse_mode="HTML",
     )
-    return ConversationHandler.END
-
+    return await back_to_menu(update, context)
 
 # ======================== اطلاعات کاربر ========================
 async def info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 آیدی عددی کاربر را وارد کنید:", reply_markup=ReplyKeyboardRemove())
     return INFO_UID
-
 
 async def info_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -161,13 +158,47 @@ async def info_uid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INFO_UID
     uid = int(text)
     pts = get_points(uid)
+    try:
+        chat = await context.bot.get_chat(uid)
+        name = chat.first_name or "کاربر"
+    except Exception:
+        name = "ناشناس"
+
     await update.message.reply_text(
-        f"👤 اطلاعات کاربر\nآیدی: {uid}\nامتیاز: {pts} ⭐"
+        f"👤 <b>اطلاعات کاربر</b>\n"
+        f"آیدی: <code>{uid}</code>\n"
+        f"نام: {name}\n"
+        f"امتیاز: <b>{pts}</b> ⭐",
+        parse_mode="HTML",
     )
+    return await back_to_menu(update, context)
+
+# ======================== بازگشت به منو ========================
+async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        ["➕ افزودن امتیاز", "➖ کاهش امتیاز"],
+        ["📊 اطلاعات کاربر"],
+        ["❌ خروج"],
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("🔙 به منوی اصلی برگشتید. چه کاری انجام دهم؟", reply_markup=markup)
     return ConversationHandler.END
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        ["➕ افزودن امتیاز", "➖ کاهش امتیاز"],
+        ["📊 اطلاعات کاربر"],
+        ["❌ خروج"],
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("❌ عملیات لغو شد.", reply_markup=markup)
+    return ConversationHandler.END
 
-# ======================== لیدربورد ========================
+async def exit_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 خداحافظ! برای ورود دوباره /start را بزنید.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+
+# ======================== لیدربورد (فقط گروه) ========================
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != GROUP_ID:
         await update.message.reply_text("⛔ این دستور فقط در گروه مخصوص قابل استفاده است.")
@@ -178,42 +209,5 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🏆 هنوز هیچ امتیازی ثبت نشده.")
         return
 
-    text = "🏆 لیدربورد امتیازات 🏆\n\n"
     medals = ["🥇", "🥈", "🥉"]
-    for i, (uid, pts) in enumerate(top):
-        rank = i + 1
-        medal = medals[i] if i < 3 else "⭐"
-        text += f"{medal} {rank}. {uid} → {pts} امتیاز\n"
-
-    await update.message.reply_text(text)
-
-
-# ======================== اجرای ربات ========================
-def main():
-    logging.basicConfig(level=logging.INFO)
-    app = Application.builder().token(TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex("^(➕ افزودن امتیاز)$") & filters.User(ADMIN_ID), add_start),
-            MessageHandler(filters.Regex("^(➖ کاهش امتیاز)$") & filters.User(ADMIN_ID), rem_start),
-            MessageHandler(filters.Regex("^(📊 اطلاعات کاربر)$") & filters.User(ADMIN_ID), info_start),
-        ],
-        states={
-            ADD_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_uid)],
-            ADD_AMT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_amt)],
-            REM_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_uid)],
-            REM_AMT: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_amt)],
-            INFO_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, info_uid)],
-        },
-        fallbacks=[CommandHandler("cancel", lambda u,c: ConversationHandler.END)],
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("leaderboard", leaderboard))
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+    text = "🏆 <b>لیدربورد امتیازات</b
