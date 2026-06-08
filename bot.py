@@ -1,5 +1,7 @@
 import logging
 import sqlite3
+import psycopg2
+import os
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -300,3 +302,33 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ======================== دیتابیس ========================
+DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL")  # این را در Render به عنوان ENV تعریف کن
+conn = psycopg2.connect(DATABASE_URL)
+cursor = conn.cursor()
+
+cursor.execute(
+    "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, points INT DEFAULT 0)"
+)
+conn.commit()
+
+def get_points(user_id: int) -> int:
+    cursor.execute("SELECT points FROM users WHERE user_id=%s", (user_id,))
+    row = cursor.fetchone()
+    return row[0] if row else 0
+
+def add_points(user_id: int, delta: int) -> int:
+    current = get_points(user_id)
+    new_points = current + delta
+    cursor.execute(
+        "INSERT INTO users (user_id, points) VALUES (%s, %s) "
+        "ON CONFLICT (user_id) DO UPDATE SET points = EXCLUDED.points",
+        (user_id, new_points),
+    )
+    conn.commit()
+    return new_points
+
+def top_users(limit: int = 10):
+    cursor.execute("SELECT user_id, points FROM users ORDER BY points DESC LIMIT %s", (limit,))
+    return cursor.fetchall()
