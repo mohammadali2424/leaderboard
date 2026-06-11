@@ -1,6 +1,0 @@
-python-telegram-bot==20.3
-httpx==0.24.1
-httpcore==0.17.3
-anyio==4.13.0
-certifi==2026.5.20
-idna==3.18
